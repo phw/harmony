@@ -5,7 +5,7 @@ import { parseHyphenatedDate, PartialDate } from '@/utils/date.ts';
 import { ResponseError } from '@/utils/errors.ts';
 import { encodeBase64 } from 'std/encoding/base64.ts';
 
-import type { Album, AlbumItem, ApiError, Image, Resource, Result, SimpleArtist } from './api_types.ts';
+import type { Album, AlbumItem, ApiError, ErrorDetails, Image, Resource, Result, SimpleArtist } from './api_types.ts';
 import type {
 	ArtistCreditName,
 	Artwork,
@@ -70,21 +70,33 @@ export default class TidalProvider extends MetadataApiProvider {
 	}
 
 	async query<Data>(apiUrl: URL, maxTimestamp?: number): Promise<CacheEntry<Data>> {
-		const cacheEntry = await this.fetchJSON<Data>(apiUrl, {
-			policy: { maxTimestamp },
-			requestInit: {
-				headers: {
-					'Authorization': `Bearer ${await this.accessToken()}`,
-					'Content-Type': 'application/vnd.tidal.v1+json',
+		try {
+			const accessToken = await this.accessToken();
+			const cacheEntry = await this.fetchJSON<Data>(apiUrl, {
+				policy: { maxTimestamp },
+				requestInit: {
+					headers: {
+						'Authorization': `Bearer ${accessToken}`,
+						'Content-Type': 'application/vnd.tidal.v1+json',
+					},
 				},
-			},
-		});
-		const { error } = cacheEntry.content as { error?: ApiError };
+			});
 
-		if (error) {
-			throw new TidalResponseError(error, apiUrl);
+			const apiError = cacheEntry.content as ApiError;
+			if (apiError.errors) {
+				throw new TidalResponseError(apiError, apiUrl);
+			}
+			return cacheEntry;
+		} catch (error) {
+			// Clone the response so the body of the original response can be
+			// consumed later if the error gets re-thrown.
+			const apiError = await error?.response?.clone().json() as ApiError;
+			if (apiError?.errors) {
+				throw new TidalResponseError(apiError, apiUrl);
+			} else {
+				throw error;
+			}
 		}
-		return cacheEntry;
 	}
 
 	private async accessToken(): Promise<string> {
@@ -307,7 +319,15 @@ export class TidalReleaseLookup extends ReleaseApiLookup<TidalProvider, Album> {
 
 class TidalResponseError extends ResponseError {
 	constructor(readonly details: ApiError, url: URL) {
-		const msg = details.errors.map((e) => `${e.field}: ${e.detail}`).join(', ');
+		const msg = details.errors.map(TidalResponseError.formatError).join(', ');
 		super('Tidal', msg, url);
+	}
+
+	private static formatError(error: ErrorDetails): string {
+		if (error.field) {
+			return `${error.field}: ${error.detail}`;
+		} else {
+			return `${error.detail}`;
+		}
 	}
 }

@@ -103,7 +103,7 @@ export type ProviderInfo = {
 	providerName: string;
 };
 
-export type Error = {
+export type ErrorDetails = {
 	category: string;
 	code: string;
 	detail: string;
@@ -111,7 +111,7 @@ export type Error = {
 };
 
 export type ApiError = {
-	errors: Error[];
+	errors: ErrorDetails[];
 };
 
 export type ResultMetadata = {
